@@ -16,6 +16,7 @@ This is a sensitivity check around the observed values. It gives no coverage gua
 the true means; protection against over-borrowing comes from the calibration of k.
 """
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import utils as ut
 
@@ -27,7 +28,7 @@ def _lambda(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, use_sd_scale):
 
 
 def get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=2000, seed=2026,
-               use_sd_scale=False, sample_variances=True, margin=0.10):
+               use_sd_scale=False, sample_variances=False, margin=0.10):
     """
     Inputs:
         xbar_0, xbar_h - observed means of the drone and external data
@@ -46,7 +47,7 @@ def get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=2000, seed=202
         ci95_low, ci95_high - 2.5th and 97.5th percentiles of n* over the redraws
         share_borrowing - share of draws with n* > (1 + margin) * n_0
         N_star - min(observed_n_star, median)
-        d_star, n_star_draws - arrays for plotting
+        d_star, n_star_draws, lambda_draws - arrays of the redraws (for plotting)
     """
     ratio = var_0 / var_h
     lam_obs = _lambda(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, use_sd_scale)
@@ -56,6 +57,7 @@ def get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=2000, seed=202
     se_0, se_h = np.sqrt(var_0 / n_0), np.sqrt(var_h / n_h)
     d_star = np.empty(n_draws)
     n_star = np.empty(n_draws)
+    lam_draws = np.empty(n_draws)
     for i in range(n_draws):
         x0 = np.random.normal(xbar_0, se_0)
         xh = np.random.normal(xbar_h, se_h)
@@ -66,6 +68,7 @@ def get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=2000, seed=202
             v0, vh = var_0, var_h
         lam = _lambda(x0, xh, v0, vh, n_0, n_h, k, use_sd_scale)
         d_star[i] = xh - x0
+        lam_draws[i] = lam
         n_star[i] = n_0 + lam * (v0 / vh) * n_h
 
     med = np.median(n_star)
@@ -81,6 +84,7 @@ def get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=2000, seed=202
         "share_borrowing": np.mean(n_star > (1 + margin) * n_0),
         "N_star": min(n_star_obs, med),
         "d_star": d_star,
+        "lambda_draws": lam_draws,
         "n_star_draws": n_star,
     }
 
@@ -132,10 +136,72 @@ def plot_n_star_hist(res, n_0, bins=60, log_y=True, save_path=None):
     return fig
 
 
+def make_xbar_h_grid(xbar_0, var_0, var_h, n_0, n_h, max_se=4.0, step_se=0.5):
+    """External means in fixed steps of SE_diff around x̄_0: x̄_0 + j * step_se * SE_diff,
+    for j from -max_se/step_se to +max_se/step_se. SE_diff = sqrt(var_0/n_0 + var_h/n_h)."""
+    se_diff = np.sqrt(var_0 / n_0 + var_h / n_h)
+    m = int(round(max_se / step_se))
+    return xbar_0 + step_se * se_diff * np.arange(-m, m + 1)
+
+
+def get_xbar_h_table(xbar_0, var_0, var_h, n_0, n_h, k, xbar_h_values,
+                     xbar_h_observed=None, n_draws=2000, seed=2026,
+                     use_sd_scale=False, sample_variances=False):
+    """
+    Table of lambda and n* as the external mean varies, with x̄_0 and the variances fixed.
+    Each column treats its x̄_h as the "observed" external mean: the observed lambda and n*
+    are computed from it, and the redraws are x̄_0* ~ N(x̄_0, var_0/n_0) and
+    x̄_h* ~ N(that x̄_h, var_h/n_h) (see get_n_star). Every column uses the same seed.
+
+    Inputs:
+        xbar_0 - observed drone mean (fixed)
+        var_0, var_h, n_0, n_h, k - as in get_n_star
+        xbar_h_values - iterable of external means (e.g. from make_xbar_h_grid)
+        xbar_h_observed - your actual observed x̄_h; added as its own column
+                          (the is_observed row is 1 there)
+        n_draws, seed, use_sd_scale, sample_variances - as in get_n_star
+    Output:
+        DataFrame, one column per x̄_h (sorted), rows:
+            xbar_h, diff_in_SEs, is_observed,
+            observed_lambda, observed_n_star,
+            lambda_median, lambda_mean, lambda_ci95_low, lambda_ci95_high,
+            n_star_median, n_star_mean, n_star_ci95_low, n_star_ci95_high
+        The 95% interval is the 2.5th to 97.5th percentile of the redraws.
+    """
+    values = [float(v) for v in xbar_h_values]
+    if xbar_h_observed is not None:
+        values.append(float(xbar_h_observed))
+    values = sorted(set(np.round(values, 10)))
+    se_diff = np.sqrt(var_0 / n_0 + var_h / n_h)
+    cols = {}
+    for xbar_h in values:
+        r = get_n_star(xbar_0, xbar_h, var_0, var_h, n_0, n_h, k, n_draws=n_draws,
+                       seed=seed, use_sd_scale=use_sd_scale,
+                       sample_variances=sample_variances)
+        lam, ns = r["lambda_draws"], r["n_star_draws"]
+        cols[xbar_h] = {
+            "xbar_h": xbar_h,
+            "diff_in_SEs": (xbar_h - xbar_0) / se_diff,
+            "is_observed": float(xbar_h_observed is not None
+                                 and np.isclose(xbar_h, xbar_h_observed)),
+            "observed_lambda": r["observed_lambda"],
+            "observed_n_star": r["observed_n_star"],
+            "lambda_median": np.median(lam),
+            "lambda_mean": lam.mean(),
+            "lambda_ci95_low": np.percentile(lam, 2.5),
+            "lambda_ci95_high": np.percentile(lam, 97.5),
+            "n_star_median": np.median(ns),
+            "n_star_mean": ns.mean(),
+            "n_star_ci95_low": np.percentile(ns, 2.5),
+            "n_star_ci95_high": np.percentile(ns, 97.5),
+        }
+    return pd.DataFrame(cols)
+
+
 #%% Run
 if __name__ == "__main__":
     # ---- ILLUSTRATIVE numbers: replace with your observed values ----
-    XBAR_0, XBAR_H = 1.75, 1.80
+    XBAR_0, XBAR_H = 1.75, 1.77
     VAR_0, VAR_H = 2.0, 2.0
     N_0, N_H = 2000, 98000
     K = 20
@@ -149,5 +215,14 @@ if __name__ == "__main__":
     print(f"95% interval of n*: [{res['ci95_low']:.1f}, {res['ci95_high']:.1f}]")
     print(f"N* = {res['N_star']:.1f}")
     plot_n_star(res, N_0, VAR_0, N_H, VAR_H, XBAR_0, XBAR_H, save_path="n_star_sensitivity.png")
-    plot_n_star_hist(res, N_0, save_path="n_star_histogram.png", log_y=True)
+    plot_n_star_hist(res, N_0, save_path="n_star_histogram.png")
+
+    # ---- table over a grid of external means (fixed steps of SE_diff around x̄_0) ----
+    grid = make_xbar_h_grid(XBAR_0, VAR_0, VAR_H, N_0, N_H, max_se=4.0, step_se=0.5)
+    table = get_xbar_h_table(XBAR_0, VAR_0, VAR_H, N_0, N_H, K, grid,
+                             xbar_h_observed=XBAR_H)
+    pd.set_option("display.width", 300, "display.max_columns", 40,
+                  "display.float_format", lambda v: f"{v:.4g}")
+    print(table)
+    table.to_csv("xbar_h_table.csv")
     plt.show()

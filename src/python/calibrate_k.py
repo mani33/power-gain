@@ -270,7 +270,7 @@ if __name__ == "__main__":
         MU_NULL = 1.75               # benchmark mean (e.g., observed subset mean)
         VAR_0 = 2.0                  # subset variance (illustrative: SD = 2)
         VAR_H = 2.0                  # external variance
-        N_0, N_H = 1000, 1000       # subset and external sample sizes
+        N_0, N_H = 2000, 98000       # subset and external sample sizes
         DELTA = 2.8 * np.sqrt(VAR_0 / N_0)   # ~80% power without borrowing
         KS = [0, 1, 2, 3, 5, 8, 10, 20, 50]  # k = 0: lambda = 1 (full pooling)
         GAPS = np.unique(np.round(np.concatenate([
