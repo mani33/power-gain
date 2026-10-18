@@ -135,8 +135,8 @@ def plot_n_star_hist(res, n_0, bins=60, log_y=True, save_path=None):
 #%% Run
 if __name__ == "__main__":
     # ---- ILLUSTRATIVE numbers: replace with your observed values ----
-    XBAR_0, XBAR_H = 1.75, 2.0
-    VAR_0, VAR_H = 4.0, 4.0
+    XBAR_0, XBAR_H = 1.75, 1.80
+    VAR_0, VAR_H = 2.0, 2.0
     N_0, N_H = 2000, 98000
     K = 20
 
